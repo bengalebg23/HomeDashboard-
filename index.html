@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<!--
+  ═══════════════════════════════════════════════════════════════════════
+  HOME — HANDOFF NOTES (read this first in any new Claude chat)
+  ═══════════════════════════════════════════════════════════════════════
+
+  WHAT THIS IS
+  The family home dashboard: one screen that launches every household app
+  and shows a live glance of each. Repo bengalebg23/HomeDashboard- (note trailing hyphen), served at
+  bengalebg23.github.io/HomeDashboard-/. Single index.html + sw.js + manifest, vanilla
+  JS, no build step. Styling matches Meal Rota / Money Flow (Inter, Patrick
+  Hand, IBM Plex Mono, blue/orange palette) with a dark theme added.
+
+  HOW THE GLANCES WORK
+  - Meal Rota: all apps live on the same origin (bengalebg23.github.io), so
+    this page reads Meal Rota's localStorage directly (mealrota_template_v1,
+    mealrota_anchor_v1) and uses the same anchor-Monday maths to find today's
+    Week A–D slot. Meal Rota is localStorage-only, so this only shows meals
+    on a device where Meal Rota has been opened.
+  - Chores: reads House Ledger's Firebase /history live (project
+    house-ledger-26622) and applies the same status rule (overdue = more than
+    3 days past cadence or never done; due = 0–3 days past). Task list = the
+    House Ledger defaults copied below + /customTasks from Firebase.
+  - To-do list (new): stored in the House Ledger Firebase project at /todos
+    ({text, done, created, doneAt} per id), cached in localStorage
+    home_todos_v1. NEEDS a rule adding in Firebase:
+        "todos": { ".read": true, ".write": true }
+    Until it's added the list works on this device only and shows a notice.
+  - Calendar: Google Calendar embed (iframe, agenda or week view). Calendar
+    IDs are entered in Settings and kept in localStorage only, never in the
+    repo, so no email address is published. Private calendars only show in a
+    browser signed into that Google account.
+  - Money Flow: launcher tile only (it's localStorage-only and personal).
+
+  RULES (same as the other apps)
+  - CDN URLs pinned to exact versions.
+  - Every release bumps APP_VERSION here AND CACHE_VERSION in sw.js.
+
+  CHANGELOG
+  v1.0.0 — first version: app tiles, today's meals, chore glance, synced
+           to-do list, Google Calendar embed, settings, light/dark theme.
+-->
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F7F8FA">
+<title>Home v1.0.0</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%232F6FE4'/><path d='M14 31 32 16l18 15v17a2 2 0 0 1-2 2H38V38H26v12H16a2 2 0 0 1-2-2z' fill='white'/></svg>">
+<link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%232F6FE4'/><path d='M44 94 96 50l52 44v50a6 6 0 0 1-6 6h-30v-36H80v36H50a6 6 0 0 1-6-6z' fill='white'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+<style>
+  :root{
+    --bg:#F7F8FA; --surface:#FFFFFF; --surface-2:#EEF1F5; --line:#D7DCE3;
+    --paper:#26313F; --paper-dim:#5b6b7d; --muted:#6b7a8c;
+    --blue:#2F6FE4; --blue-dim:#1f4fb0; --blue-soft:#E6EEFC;
+    --rose:#F0703C; --rose-soft:#FDEBE2; --amber:#C98A12; --amber-soft:#FBF1DC;
+    --green:#2FA84F; --green-soft:#E3F4E8;
+    --t-meal:#E0A23A; --t-chores:#8E4B8A; --t-money:#2FA84F; --t-cal:#2F6FE4;
+    --shadow:0 1px 2px rgba(38,49,63,.06), 0 2px 10px rgba(38,49,63,.05);
+  }
+  :root[data-theme="dark"]{
+    --bg:#12161C; --surface:#1B2129; --surface-2:#232B35; --line:#313B47;
+    --paper:#E6EBF1; --paper-dim:#A8B4C2; --muted:#8392A3;
+    --blue:#5B8FF0; --blue-dim:#8DB1F5; --blue-soft:#1F2D45;
+    --rose:#F2865A; --rose-soft:#3A2620; --amber:#E0A93A; --amber-soft:#352C18;
+    --green:#4CC06B; --green-soft:#1C3324;
+    --shadow:0 1px 2px rgba(0,0,0,.3);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{background:var(--bg); color:var(--paper); font-family:'Inter',system-ui,sans-serif;
+    min-height:100vh; padding:0 16px calc(40px + env(safe-area-inset-bottom)); -webkit-tap-highlight-color:transparent;}
+  button,input{font:inherit; color:inherit;}
+  a{color:inherit;}
+  .wrap{max-width:980px; margin:0 auto;}
+  .display{font-family:'Patrick Hand',cursive; font-weight:400;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  .eyebrow{font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0;}
+
+  /* Header */
+  header{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; padding:calc(18px + env(safe-area-inset-top)) 0 14px;}
+  header h1{font-family:'Patrick Hand',cursive; font-weight:400; font-size:34px; line-height:1; margin:4px 0 0;}
+  .hdr-btns{display:flex; gap:8px;}
+  .icon-btn{width:40px; height:40px; border-radius:12px; border:1px solid var(--line); background:var(--surface);
+    display:grid; place-items:center; cursor:pointer; color:var(--paper-dim);}
+  .icon-btn:active{transform:scale(.96);}
+  .icon-btn svg{width:19px; height:19px;}
+
+  /* App tiles */
+  .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px;}
+  .tile{display:flex; flex-direction:column; gap:10px; padding:14px 12px 12px; border-radius:16px; background:var(--surface);
+    border:1px solid var(--line); text-decoration:none; box-shadow:var(--shadow); min-width:0; transition:transform .1s;}
+  .tile:active{transform:scale(.97);}
+  .tile .ic{width:38px; height:38px; border-radius:11px; display:grid; place-items:center; color:#fff;}
+  .tile .ic svg{width:21px; height:21px;}
+  .tile .nm{font-weight:600; font-size:14px; line-height:1.15;}
+  .tile .st{font-size:11.5px; color:var(--muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  @media (max-width:520px){
+    .tiles{gap:8px;}
+    .tile{padding:12px 6px 10px; align-items:center; text-align:center; gap:7px;}
+    .tile .nm{font-size:12.5px;}
+    .tile .st{display:none;}
+  }
+
+  /* Cards */
+  .grid{display:grid; grid-template-columns:1fr; gap:14px;}
+  @media (min-width:820px){ .grid{grid-template-columns:1fr 1fr;} .span2{grid-column:1 / -1;} }
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:18px; padding:16px; box-shadow:var(--shadow); min-width:0;}
+  .card-h{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;}
+  .card-h h2{font-family:'Patrick Hand',cursive; font-weight:400; font-size:25px; margin:2px 0 0; line-height:1.05;}
+  .open-link{font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--blue); text-decoration:none; padding:7px 10px; border-radius:9px; background:var(--blue-soft); white-space:nowrap;}
+
+  /* Meals */
+  .meal-row{display:grid; grid-template-columns:62px 1fr; gap:10px; padding:10px 0; border-top:1px dashed var(--line);}
+  .meal-row:first-of-type{border-top:0; padding-top:2px;}
+  .meal-row .k{font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); padding-top:3px;}
+  .meal-row .v{font-size:16px; font-weight:600; line-height:1.3;}
+  .meal-row .v .who{display:block; font-size:12px; font-weight:500; color:var(--paper-dim);}
+  .meal-row .v .who + .who{margin-top:6px;}
+  .meal-row .v.empty{color:var(--muted); font-weight:400; font-style:italic; font-size:14px;}
+  .wk-pill{display:inline-flex; align-items:center; gap:6px; font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600;
+    padding:3px 8px; border-radius:999px; background:var(--amber-soft); color:var(--amber);}
+  .day-note{font-size:12.5px; color:var(--paper-dim); margin:0 0 8px;}
+  .tomorrow{margin-top:10px; padding:10px 12px; border-radius:12px; background:var(--surface-2); font-size:13px; color:var(--paper-dim);}
+  .tomorrow b{color:var(--paper); font-weight:600;}
+
+  /* Chores */
+  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;}
+  .stat{border-radius:12px; padding:10px 10px 8px;}
+  .stat .n{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:24px; line-height:1; font-variant-numeric:tabular-nums;}
+  .stat .l{font-family:'IBM Plex Mono',monospace; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; margin-top:5px;}
+  .s-over{background:var(--rose-soft); color:var(--rose);} .s-due{background:var(--amber-soft); color:var(--amber);} .s-ok{background:var(--green-soft); color:var(--green);}
+  .chore{display:flex; align-items:center; gap:10px; padding:9px 0; border-top:1px dashed var(--line);}
+  .chore:first-child{border-top:0;}
+  .chore .dot{width:8px; height:8px; border-radius:50%; flex:none;}
+  .chore .t{flex:1; min-width:0; font-size:14px;}
+  .chore .t small{display:block; font-size:11px; color:var(--muted);}
+  .chore .b{font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; white-space:nowrap;}
+
+  /* To-do */
+  .todo-add{display:flex; gap:8px; margin-bottom:10px;}
+  .todo-add input{flex:1; min-width:0; height:44px; border-radius:12px; border:1px solid var(--line); background:var(--surface-2); padding:0 14px; font-size:16px; outline:none;}
+  .todo-add input:focus{border-color:var(--blue); background:var(--surface);}
+  .todo-add button{height:44px; padding:0 16px; border-radius:12px; border:0; background:var(--blue); color:#fff; font-weight:600; cursor:pointer;}
+  .todo{display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px dashed var(--line);}
+  .todo:first-child{border-top:0;}
+  .todo .cb{width:26px; height:26px; border-radius:8px; border:2px solid var(--line); background:transparent; flex:none; cursor:pointer;
+    display:grid; place-items:center; padding:0; color:#fff;}
+  .todo.done .cb{background:var(--green); border-color:var(--green);}
+  .todo .cb svg{width:15px; height:15px; opacity:0;}
+  .todo.done .cb svg{opacity:1;}
+  .todo .tx{flex:1; min-width:0; font-size:15px; line-height:1.35; word-wrap:break-word; cursor:pointer;}
+  .todo.done .tx{color:var(--muted); text-decoration:line-through;}
+  .todo .del{width:32px; height:32px; border:0; background:none; color:var(--muted); cursor:pointer; border-radius:8px; flex:none; font-size:20px; line-height:1;}
+  .todo-foot{display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:12px; color:var(--muted);}
+  .linkish{border:0; background:none; color:var(--blue); font-weight:600; font-size:12px; cursor:pointer; padding:4px 0;}
+  .empty-note{color:var(--muted); font-size:14px; padding:10px 0 4px; text-align:center;}
+  .notice{font-size:12px; line-height:1.45; padding:9px 11px; border-radius:10px; background:var(--amber-soft); color:var(--paper); margin-bottom:10px;}
+  .notice code{font-family:'IBM Plex Mono',monospace; font-size:11px;}
+
+  /* Calendar */
+  .seg{display:inline-flex; background:var(--surface-2); border-radius:10px; padding:3px;}
+  .seg button{border:0; background:none; padding:6px 10px; border-radius:8px; font-size:12px; font-weight:600; color:var(--paper-dim); cursor:pointer;}
+  .seg button.on{background:var(--surface); color:var(--paper); box-shadow:var(--shadow);}
+  .cal-frame{width:100%; height:520px; border:0; border-radius:12px; background:#fff; display:block;}
+  .cal-setup{text-align:center; padding:22px 10px 12px;}
+  .cal-setup p{color:var(--paper-dim); font-size:14px; margin:0 0 14px; line-height:1.5;}
+  .btn{height:42px; padding:0 18px; border-radius:12px; border:0; background:var(--blue); color:#fff; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center;}
+  .btn.ghost{background:var(--surface-2); color:var(--paper);}
+  .cal-foot{display:flex; justify-content:space-between; gap:10px; margin-top:10px; font-size:12px; color:var(--muted); align-items:center;}
+
+  /* Settings sheet */
+  .scrim{position:fixed; inset:0; background:rgba(15,20,28,.45); display:none; align-items:flex-end; justify-content:center; z-index:50;}
+  .scrim.open{display:flex;}
+  .sheet{background:var(--surface); width:100%; max-width:560px; border-radius:20px 20px 0 0; padding:20px 18px calc(22px + env(safe-area-inset-bottom)); max-height:90vh; overflow:auto;}
+  @media (min-width:600px){ .scrim{align-items:center;} .sheet{border-radius:20px;} }
+  .sheet h3{font-family:'Patrick Hand',cursive; font-weight:400; font-size:26px; margin:0 0 14px;}
+  .field{margin-bottom:16px;}
+  .field label{display:block; font-weight:600; font-size:14px; margin-bottom:6px;}
+  .field .hint{font-size:12.5px; color:var(--muted); line-height:1.45; margin:6px 0 0;}
+  .field textarea{width:100%; min-height:84px; border-radius:12px; border:1px solid var(--line); background:var(--surface-2); padding:10px 12px; font:14px 'IBM Plex Mono',monospace; color:var(--paper); resize:vertical; outline:none;}
+  .sheet-btns{display:flex; gap:8px; justify-content:flex-end;}
+
+  footer{text-align:center; margin-top:26px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--muted); letter-spacing:.06em;}
+  .sync-dot{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--muted); margin-right:6px; vertical-align:1px;}
+  .sync-dot.on{background:var(--green);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <p class="eyebrow" id="today"></p>
+      <h1 id="greeting">Home</h1>
+    </div>
+    <div class="hdr-btns">
+      <button class="icon-btn" id="themeBtn" aria-label="Toggle dark mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tiles">
+    <a class="tile" href="../MealRota/">
+      <span class="ic" style="background:var(--t-meal)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg></span>
+      <span><div class="nm">Meal Rota</div><div class="st" id="tileMeal">Weekly rota</div></span>
+    </a>
+    <a class="tile" href="../Chores/">
+      <span class="ic" style="background:var(--t-chores)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
+      <span><div class="nm">Chores</div><div class="st" id="tileChores">House Ledger</div></span>
+    </a>
+    <a class="tile" href="../MoneyFlow/">
+      <span class="ic" style="background:var(--t-money)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h5c4 0 4 6 8 6h5"/><path d="M3 18h5c4 0 4-6 8-6"/><path d="M18 9l3 3-3 3"/></svg></span>
+      <span><div class="nm">Money Flow</div><div class="st">Yearly Sankey</div></span>
+    </a>
+    <a class="tile" href="https://calendar.google.com/" target="_blank" rel="noopener">
+      <span class="ic" style="background:var(--t-cal)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span>
+      <span><div class="nm">Calendar</div><div class="st">Google Calendar</div></span>
+    </a>
+  </nav>
+
+  <main class="grid">
+
+    <section class="card" id="mealCard">
+      <div class="card-h">
+        <div><p class="eyebrow">On the table</p><h2 id="mealTitle">Today</h2></div>
+        <a class="open-link" href="../MealRota/">Open</a>
+      </div>
+      <div id="mealBody"></div>
+    </section>
+
+    <section class="card" id="choreCard">
+      <div class="card-h">
+        <div><p class="eyebrow"><span class="sync-dot" id="choreDot"></span>House Ledger</p><h2>Chores</h2></div>
+        <a class="open-link" href="../Chores/">Open</a>
+      </div>
+      <div id="choreBody"><p class="empty-note">Loading chores…</p></div>
+    </section>
+
+    <section class="card span2" id="todoCard">
+      <div class="card-h">
+        <div><p class="eyebrow"><span class="sync-dot" id="todoDot"></span>Shared list</p><h2>To do</h2></div>
+      </div>
+      <div id="todoNotice"></div>
+      <form class="todo-add" id="todoForm" autocomplete="off">
+        <input id="todoInput" type="text" placeholder="Add something…" enterkeyhint="done" maxlength="200">
+        <button type="submit">Add</button>
+      </form>
+      <div id="todoList"></div>
+      <div class="todo-foot">
+        <span id="todoCount"></span>
+        <button class="linkish" id="clearDone" type="button">Clear done</button>
+      </div>
+    </section>
+
+    <section class="card span2" id="calCard">
+      <div class="card-h">
+        <div><p class="eyebrow">Google</p><h2>Calendar</h2></div>
+        <div class="seg" id="calSeg">
+          <button data-mode="AGENDA" type="button">Agenda</button>
+          <button data-mode="WEEK" type="button">Week</button>
+          <button data-mode="MONTH" type="button">Month</button>
+        </div>
+      </div>
+      <div id="calBody"></div>
+    </section>
+
+  </main>
+
+  <footer><span id="versionBadge"></span> · bengalebg23.github.io/HomeDashboard-</footer>
+</div>
+
+<div class="scrim" id="settings">
+  <div class="sheet" role="dialog" aria-label="Settings">
+    <h3>Settings</h3>
+    <div class="field">
+      <label for="calIds">Google Calendar IDs</label>
+      <textarea id="calIds" placeholder="you@gmail.com&#10;family123@group.calendar.google.com"></textarea>
+      <p class="hint">One per line. Your main calendar's ID is your Gmail address; a shared calendar's ID is in Google Calendar → Settings → the calendar → Integrate calendar. Saved on this device only, never in the code.</p>
+    </div>
+    <div class="sheet-btns">
+      <button class="btn ghost" type="button" id="settingsCancel">Cancel</button>
+      <button class="btn" type="button" id="settingsSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const APP_VERSION = "1.0.0";
+const TZ = "Europe/London";
+
+/* ───────── Small helpers ───────── */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const lsGet = (k, fb) => { try{ const v = localStorage.getItem(k); return v == null ? fb : JSON.parse(v); }catch(e){ return fb; } };
+const lsSet = (k, v) => { try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+const lsRaw = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
+const isoLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const daysBetween = (a, b) => Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000);
+
+/* ───────── Theme ───────── */
+const THEME_KEY = "home_theme";
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', t === 'dark' ? '#12161C' : '#F7F8FA');
+}
+let theme = lsRaw(THEME_KEY) || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+applyTheme(theme);
+$('themeBtn').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; try{ localStorage.setItem(THEME_KEY, theme); }catch(e){} applyTheme(theme); };
+
+/* ───────── Header ───────── */
+function renderHeader(){
+  const now = new Date();
+  const h = now.getHours();
+  $('greeting').textContent = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  $('today').textContent = now.toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'});
+}
+
+/* ───────── Meal Rota glance (same-origin localStorage) ───────── */
+const MR_DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
+const MR_WEEKS = ["A","B","C","D"];
+function mrSlot(date){
+  const anchorStr = lsRaw("mealrota_anchor_v1");
+  const template = lsGet("mealrota_template_v1", null);
+  if(!anchorStr || !template) return null;
+  const anchor = new Date(anchorStr + "T00:00:00");
+  const day = date.getDay();
+  const monday = new Date(date); monday.setHours(0,0,0,0); monday.setDate(date.getDate() + (day === 0 ? -6 : 1 - day));
+  const weeks = Math.round((monday - anchor) / (7*24*3600*1000));
+  const wk = MR_WEEKS[((weeks % 4) + 4) % 4];
+  const dk = MR_DAYS[day === 0 ? 6 : day - 1];
+  return { wk, dk, entry: (template[wk] || {})[dk] || null };
+}
+function mealText(slot, adultsOpen){
+  if(!slot) return null;
+  const fam = slot.family, ad = adultsOpen ? slot.adults : null;
+  if(fam && ad) return `<span class="who">Kids</span>${esc(fam)}<span class="who">Adults</span>${esc(ad)}`;
+  if(ad) return `${esc(ad)}<span class="who">Adults</span>`;
+  if(fam) return esc(fam);
+  return null;
+}
+function shortMeal(slot, adultsOpen){
+  if(!slot) return null;
+  return slot.family || (adultsOpen ? slot.adults : null) || null;
+}
+function renderMeals(){
+  const now = new Date();
+  const today = mrSlot(now);
+  const body = $('mealBody');
+  if(!today){
+    body.innerHTML = `<p class="empty-note">Open Meal Rota once on this device and today's meals will show here.</p>`;
+    $('tileMeal').textContent = 'Weekly rota';
+    return;
+  }
+  const e = today.entry || {};
+  const dayName = now.toLocaleDateString('en-GB', {weekday:'long'});
+  $('mealTitle').innerHTML = `${dayName} <span class="wk-pill">Week ${today.wk}</span>`;
+  const lunch = mealText(e.lunch, e.adultsOpen);
+  const tea = mealText(e.tea, e.adultsOpen);
+  const tom = new Date(now); tom.setDate(now.getDate() + 1);
+  const t = mrSlot(tom);
+  const tomTea = t && t.entry ? shortMeal(t.entry.tea, t.entry.adultsOpen) : null;
+  body.innerHTML = `
+    <div class="meal-row"><div class="k">Lunch</div><div class="v ${lunch ? '' : 'empty'}">${lunch || 'Nothing set'}</div></div>
+    <div class="meal-row"><div class="k">Tea</div><div class="v ${tea ? '' : 'empty'}">${tea || 'Nothing set'}</div></div>
+    <div class="tomorrow">Tomorrow's tea: <b>${tomTea ? esc(tomTea) : 'not set yet'}</b>${t && t.wk !== today.wk ? ` · Week ${t.wk}` : ''}</div>`;
+  const teaShort = shortMeal(e.tea, e.adultsOpen);
+  $('tileMeal').textContent = teaShort ? `Tea: ${teaShort}` : `Week ${today.wk}`;
+}
+
+/* ───────── Firebase (House Ledger project) ───────── */
+const firebaseConfig = {
+  apiKey: "AIzaSyAgrGcq4yAqp9jkUR9WPR3iFQqPR9787sY",
+  authDomain: "house-ledger-26622.firebaseapp.com",
+  databaseURL: "https://house-ledger-26622-default-rtdb.europe-west1.firebasedatabase.app/",
+  projectId: "house-ledger-26622",
+  storageBucket: "house-ledger-26622.firebasestorage.app",
+  messagingSenderId: "409038286250",
+  appId: "1:409038286250:web:4e61b9b1d232820efa4fd3"
+};
+let db = null;
+try{ firebase.initializeApp(firebaseConfig); db = firebase.database(); }catch(e){ console.warn('Firebase unavailable', e); }
+
+/* ───────── Chores glance ───────── */
+// Copied from House Ledger (Chores) DEFAULT_TASKS — custom chores come from /customTasks.
+const CHORE_DEFAULTS = [
+  ['bed-viviens','Bed Change',"Vivien's room",14],['bed-emben','Bed Change','Emily & Ben',14],['bed-reuben','Bed Change','Reuben',14],['bed-spare','Bed Change','Spare room',28],
+  ['hv-viviens','Hoover',"Vivien's room",14],['hv-emben','Hoover','Emily & Ben',14],['hv-reuben','Hoover','Reuben',14],['hv-spare','Hoover','Spare room',28],
+  ['hv-office','Hoover','Office',14],['hv-topstairs','Hoover','Top stairs',14],['hv-botstairs','Hoover','Bottom stairs',14],['hv-hallway','Hoover','Hallway',14],
+  ['hv-lounge','Hoover','Lounge',7],['hv-kitchen','Hoover','Kitchen',7],['hv-playarea','Hoover','Play area',7],
+  ['du-viviens','Dusting',"Vivien's room",28],['du-emben','Dusting','Emily & Ben',28],['du-reuben','Dusting','Reuben',28],['du-spare','Dusting','Spare room',28],
+  ['du-office','Dusting','Office',28],['du-lounge','Dusting','Lounge',14],['du-kitchen','Dusting','Kitchen',14],['du-playarea','Dusting','Play area',14],
+  ['gr-v-toes','Grooming','V. Toenails',28],['gr-v-fingers','Grooming','V. Fingernails',14],['gr-r-toes','Grooming','R. Toenails',28],['gr-r-fingers','Grooming','R. Fingernails',14],
+  ['ba-low-toilet','Bathrooms','Lower · Toilet',7],['ba-low-sink','Bathrooms','Lower · Sink',7],['ba-low-floor','Bathrooms','Lower · Floors',7],
+  ['ba-mid-toilet','Bathrooms','Middle · Toilet',7],['ba-mid-sink','Bathrooms','Middle · Sink',7],['ba-mid-floor','Bathrooms','Middle · Floors',7],['ba-mid-bath','Bathrooms','Middle · Bath',14],
+  ['ba-up-toilet','Bathrooms','Upper · Toilet',7],['ba-up-sink','Bathrooms','Upper · Sink',7],['ba-up-floor','Bathrooms','Upper · Floors',7],['ba-up-shower','Bathrooms','Upper · Shower',14],
+  ['mi-misc','Misc','Miscellaneous',14],
+].map(([id,group,label,cadence]) => ({id,group,label,cadence}));
+
+const hl = lsGet('house-ledger-v1', {}) || {};
+let choreHistory = hl.history || null;
+let choreCustom = {};
+(hl.tasks || []).forEach(t => { if(t && t.id && !CHORE_DEFAULTS.some(d => d.id === t.id)) choreCustom[t.id] = t; });
+
+function choreStatus(task, last, todayISO){
+  if(!last) return {kind:'never', over:0};
+  const over = daysBetween(last, todayISO) - task.cadence;
+  if(over > 3) return {kind:'overdue', over};
+  if(over >= 0) return {kind:'due', over};
+  return {kind:'fresh', over};
+}
+function renderChores(){
+  const body = $('choreBody');
+  if(!choreHistory){
+    body.innerHTML = `<p class="empty-note">Waiting for House Ledger…</p>`;
+    return;
+  }
+  const todayISO = isoLocal(new Date());
+  const tasks = [...CHORE_DEFAULTS, ...Object.values(choreCustom)].filter(t => t && t.id && t.cadence);
+  const rows = tasks.map(t => {
+    const arr = choreHistory[t.id] || [];
+    const last = arr.length ? arr[arr.length - 1] : null;
+    return {...t, last, s: choreStatus(t, last, todayISO)};
+  });
+  const over = rows.filter(r => r.s.kind === 'overdue' || r.s.kind === 'never');
+  const due = rows.filter(r => r.s.kind === 'due');
+  const fresh = rows.filter(r => r.s.kind === 'fresh');
+  const order = {overdue:0, never:1, due:2, fresh:3}; // most-overdue real chores first, never-done after
+  const top = [...over, ...due].sort((a,b) => order[a.s.kind] - order[b.s.kind] || b.s.over - a.s.over).slice(0, 5);
+  const colour = k => k === 'due' ? 'var(--amber)' : 'var(--rose)';
+  const badge = r => r.s.kind === 'never' ? 'never done' : r.s.kind === 'due' ? (r.s.over === 0 ? 'due today' : `due ${r.s.over}d`) : `${r.s.over}d over`;
+  body.innerHTML = `
+    <div class="stats">
+      <div class="stat s-over"><div class="n">${over.length}</div><div class="l">Overdue</div></div>
+      <div class="stat s-due"><div class="n">${due.length}</div><div class="l">Due</div></div>
+      <div class="stat s-ok"><div class="n">${fresh.length}</div><div class="l">Done</div></div>
+    </div>
+    ${top.length ? `<div>${top.map(r => `
+      <div class="chore"><span class="dot" style="background:${colour(r.s.kind)}"></span>
+        <div class="t">${esc(r.label)}<small>${esc(r.group)}</small></div>
+        <span class="b" style="color:${colour(r.s.kind)}">${badge(r)}</span></div>`).join('')}</div>`
+      : `<p class="empty-note">All caught up 🎉</p>`}`;
+  $('tileChores').textContent = over.length ? `${over.length} overdue` : due.length ? `${due.length} due` : 'All caught up';
+}
+if(db){
+  db.ref('history').on('value', snap => { choreHistory = snap.val() || {}; $('choreDot').classList.add('on'); renderChores(); },
+    err => { console.warn('history', err); if(!choreHistory) choreHistory = {}; renderChores(); });
+  db.ref('customTasks').on('value', snap => { const v = snap.val() || {}; Object.values(v).forEach(t => { if(t && t.id) choreCustom[t.id] = t; }); renderChores(); },
+    err => console.warn('customTasks', err));
+}
+
+/* ───────── To-do list (Firebase /todos, cached locally) ───────── */
+const TODO_KEY = "home_todos_v1";
+let todos = lsGet(TODO_KEY, {}) || {};
+let todoSynced = false;
+let todoBlocked = false;
+
+function saveTodosLocal(){ lsSet(TODO_KEY, todos); }
+function todoWrite(id, value){
+  if(value == null) delete todos[id]; else todos[id] = value;
+  saveTodosLocal(); renderTodos();
+  if(db && !todoBlocked){
+    const ref = db.ref('todos/' + id);
+    (value == null ? ref.remove() : ref.set(value)).catch(err => { console.warn('todo write', err); markTodoBlocked(); });
+  }
+}
+function markTodoBlocked(){
+  todoBlocked = true;
+  $('todoDot').classList.remove('on');
+  $('todoNotice').innerHTML = `<div class="notice">Saved on this device only. To share the list across phones, add <code>"todos": { ".read": true, ".write": true }</code> to the House Ledger Firebase rules.</div>`;
+}
+function renderTodos(){
+  const list = Object.entries(todos).map(([id, t]) => ({id, ...t}))
+    .sort((a,b) => (a.done - b.done) || (a.done ? (b.doneAt||0) - (a.doneAt||0) : (b.created||0) - (a.created||0)));
+  const open = list.filter(t => !t.done).length;
+  const done = list.length - open;
+  $('todoList').innerHTML = list.length ? list.map(t => `
+    <div class="todo ${t.done ? 'done' : ''}" data-id="${esc(t.id)}">
+      <button class="cb" type="button" aria-label="${t.done ? 'Mark not done' : 'Mark done'}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></button>
+      <div class="tx">${esc(t.text)}</div>
+      <button class="del" type="button" aria-label="Delete">×</button>
+    </div>`).join('') : `<p class="empty-note">Nothing on the list.</p>`;
+  $('todoCount').textContent = list.length ? `${open} to do${done ? ` · ${done} done` : ''}` : '';
+  $('clearDone').style.visibility = done ? 'visible' : 'hidden';
+}
+$('todoList').addEventListener('click', ev => {
+  const row = ev.target.closest('.todo'); if(!row) return;
+  const id = row.dataset.id, t = todos[id]; if(!t) return;
+  if(ev.target.closest('.del')){ setTimeout(() => todoWrite(id, null), 0); return; }
+  if(ev.target.closest('.cb') || ev.target.closest('.tx')){
+    const done = !t.done;
+    setTimeout(() => todoWrite(id, {...t, done, doneAt: done ? Date.now() : null}), 0);
+  }
+});
+$('todoForm').addEventListener('submit', ev => {
+  ev.preventDefault();
+  const text = $('todoInput').value.trim(); if(!text) return;
+  const id = (db && !todoBlocked) ? db.ref('todos').push().key : 't' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  $('todoInput').value = '';
+  todoWrite(id, {text, done:false, created:Date.now(), doneAt:null});
+});
+$('clearDone').onclick = () => {
+  const ids = Object.keys(todos).filter(id => todos[id].done);
+  if(!ids.length || !confirm(`Remove ${ids.length} done item${ids.length === 1 ? '' : 's'}?`)) return;
+  ids.forEach(id => delete todos[id]);
+  saveTodosLocal(); renderTodos();
+  if(db && !todoBlocked){
+    const upd = {}; ids.forEach(id => upd[id] = null);
+    db.ref('todos').update(upd).catch(err => { console.warn(err); markTodoBlocked(); });
+  }
+};
+if(db){
+  db.ref('todos').on('value', snap => {
+    const remote = snap.val() || {};
+    // First sync: push up anything added on this device while offline / before sync existed
+    if(!todoSynced){
+      const upd = {};
+      Object.entries(todos).forEach(([id, t]) => { if(!remote[id]) { remote[id] = t; upd[id] = t; } });
+      if(Object.keys(upd).length) db.ref('todos').update(upd).catch(() => markTodoBlocked());
+      todoSynced = true;
+    }
+    todos = remote; saveTodosLocal(); renderTodos();
+    $('todoDot').classList.add('on'); $('todoNotice').innerHTML = '';
+  }, err => { console.warn('todos', err); markTodoBlocked(); });
+}
+
+/* ───────── Google Calendar embed ───────── */
+const CAL_KEY = "home_calendar_ids_v1";
+const CAL_MODE_KEY = "home_calendar_mode_v1";
+let calIds = lsGet(CAL_KEY, []) || [];
+let calMode = lsRaw(CAL_MODE_KEY) || 'AGENDA';
+const CAL_COLOURS = ['#039BE5','#33B679','#E67C73','#F6BF26','#8E24AA','#F4511E'];
+function calUrl(){
+  const p = new URLSearchParams({ctz:TZ, mode:calMode, showTitle:'0', showPrint:'0', showTabs:'0', showCalendars:'0', showTz:'0', wkst:'2'});
+  calIds.forEach((id, i) => { p.append('src', id); p.append('color', CAL_COLOURS[i % CAL_COLOURS.length]); });
+  return 'https://calendar.google.com/calendar/embed?' + p.toString();
+}
+function renderCalendar(){
+  document.querySelectorAll('#calSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === calMode));
+  $('calSeg').style.display = calIds.length ? '' : 'none';
+  if(!calIds.length){
+    $('calBody').innerHTML = `<div class="cal-setup"><p>Add your Google Calendar to see what's coming up.<br>It's your Gmail address for your main calendar.</p><button class="btn" type="button" id="calSetupBtn">Add calendar</button></div>`;
+    $('calSetupBtn').onclick = openSettings;
+    return;
+  }
+  $('calBody').innerHTML = `<iframe class="cal-frame" src="${esc(calUrl())}" loading="lazy" title="Google Calendar"></iframe>
+    <div class="cal-foot"><span>Blank? Sign into Google in this browser.</span><a class="linkish" href="https://calendar.google.com/" target="_blank" rel="noopener">Open Google Calendar ↗</a></div>`;
+}
+$('calSeg').addEventListener('click', ev => {
+  const b = ev.target.closest('button'); if(!b) return;
+  calMode = b.dataset.mode; try{ localStorage.setItem(CAL_MODE_KEY, calMode); }catch(e){}
+  renderCalendar();
+});
+
+/* ───────── Settings ───────── */
+function openSettings(){ $('calIds').value = calIds.join('\n'); $('settings').classList.add('open'); }
+function closeSettings(){ $('settings').classList.remove('open'); }
+$('settingsBtn').onclick = openSettings;
+$('settingsCancel').onclick = closeSettings;
+$('settings').addEventListener('click', ev => { if(ev.target === $('settings')) closeSettings(); });
+$('settingsSave').onclick = () => {
+  calIds = $('calIds').value.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  lsSet(CAL_KEY, calIds); closeSettings(); renderCalendar();
+};
+
+/* ───────── Boot ───────── */
+$('versionBadge').textContent = `v${APP_VERSION}`;
+function renderAll(){ renderHeader(); renderMeals(); renderChores(); renderTodos(); }
+renderAll(); renderCalendar();
+if(!db) markTodoBlocked();
+// Refresh glances when coming back to the tab (e.g. after editing Meal Rota) and at midnight
+document.addEventListener('visibilitychange', () => { if(!document.hidden) renderAll(); });
+setInterval(renderHeader, 60000);
+let lastDay = isoLocal(new Date());
+setInterval(() => { const d = isoLocal(new Date()); if(d !== lastDay){ lastDay = d; renderAll(); } }, 60000);
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW', err));
+    let reloaded = false;
+    const hadController = !!navigator.serviceWorker.controller; // don't reload on very first install
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if(reloaded || !hadController) return; reloaded = true; location.reload(); });
+  });
+}
+</script>
+</body>
+</html>

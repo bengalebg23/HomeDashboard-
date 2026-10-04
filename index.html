@@ -26,7 +26,15 @@
     home_todos_v1. NEEDS a rule adding in Firebase:
         "todos": { ".read": true, ".write": true }
     Until it's added the list works on this device only and shows a notice.
-  - Calendar: Google Calendar embed (iframe, agenda or week view). Calendar
+  - Calendar (v1.1): primary source is Ben's own Google Apps Script web app
+    (calendar-feed.gs in this repo, deployed from his Google account, "execute
+    as me", access "anyone"). It returns the next N days of events as JSON
+    and is guarded by a secret key. The full /exec?key=… URL is entered in
+    Settings and kept in localStorage (home_calendar_feed_v1), never in the
+    repo. Events cached in home_calendar_cache_v1 for offline. Reason: the
+    iframe embed shows blank on phones because Chrome blocks Google's sign-in
+    cookies inside third-party frames.
+  - Calendar fallback: Google Calendar embed (iframe, agenda or week view). Calendar
     IDs are entered in Settings and kept in localStorage only, never in the
     repo, so no email address is published. Private calendars only show in a
     browser signed into that Google account.
@@ -37,6 +45,9 @@
   - Every release bumps APP_VERSION here AND CACHE_VERSION in sw.js.
 
   CHANGELOG
+  v1.1.0 — calendar now reads events from Ben's Apps Script feed and shows
+           a native 14-day agenda (embed was blank on phones). Calendar tile
+           shows the next event. Embed kept as a fallback.
   v1.0.0 — first version: app tiles, today's meals, chore glance, synced
            to-do list, Google Calendar embed, settings, light/dark theme.
 -->
@@ -45,7 +56,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#F7F8FA">
-<title>Home v1.0.0</title>
+<title>Home v1.1.0</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%232F6FE4'/><path d='M14 31 32 16l18 15v17a2 2 0 0 1-2 2H38V38H26v12H16a2 2 0 0 1-2-2z' fill='white'/></svg>">
 <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%232F6FE4'/><path d='M44 94 96 50l52 44v50a6 6 0 0 1-6 6h-30v-36H80v36H50a6 6 0 0 1-6-6z' fill='white'/></svg>">
@@ -174,6 +185,16 @@
   .cal-setup p{color:var(--paper-dim); font-size:14px; margin:0 0 14px; line-height:1.5;}
   .btn{height:42px; padding:0 18px; border-radius:12px; border:0; background:var(--blue); color:#fff; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center;}
   .btn.ghost{background:var(--surface-2); color:var(--paper);}
+  .ev-day{font-family:'IBM Plex Mono',monospace; font-size:10.5px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:14px 0 4px;}
+  .ev-day:first-child{margin-top:0;}
+  .ev-day.today{color:var(--blue);}
+  .ev{display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-top:1px dashed var(--line);}
+  .ev-day + .ev{border-top:0;}
+  .ev .bar{width:4px; align-self:stretch; border-radius:3px; flex:none; min-height:22px;}
+  .ev .tm{font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--paper-dim); width:96px; flex:none; padding-top:2px; white-space:nowrap; font-variant-numeric:tabular-nums;}
+  .ev .ti{flex:1; min-width:0; font-size:15px; font-weight:500; line-height:1.3; word-wrap:break-word;}
+  .ev .ti small{display:block; font-size:12px; font-weight:400; color:var(--muted); margin-top:1px;}
+  .ev.past{opacity:.5;}
   .cal-foot{display:flex; justify-content:space-between; gap:10px; margin-top:10px; font-size:12px; color:var(--muted); align-items:center;}
 
   /* Settings sheet */
@@ -226,7 +247,7 @@
     </a>
     <a class="tile" href="https://calendar.google.com/" target="_blank" rel="noopener">
       <span class="ic" style="background:var(--t-cal)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span>
-      <span><div class="nm">Calendar</div><div class="st">Google Calendar</div></span>
+      <span><div class="nm">Calendar</div><div class="st" id="tileCal">Google Calendar</div></span>
     </a>
   </nav>
 
@@ -285,7 +306,12 @@
   <div class="sheet" role="dialog" aria-label="Settings">
     <h3>Settings</h3>
     <div class="field">
-      <label for="calIds">Google Calendar IDs</label>
+      <label for="calFeed">Calendar feed link</label>
+      <textarea id="calFeed" style="min-height:64px" placeholder="https://script.google.com/macros/s/…/exec?key=…"></textarea>
+      <p class="hint">The web-app link from your Google Apps Script (calendar-feed.gs), with <code>?key=</code> and your secret on the end. Works on any phone. Saved on this device only.</p>
+    </div>
+    <div class="field">
+      <label for="calIds">Google Calendar IDs (fallback embed)</label>
       <textarea id="calIds" placeholder="you@gmail.com&#10;family123@group.calendar.google.com"></textarea>
       <p class="hint">One per line. Your main calendar's ID is your Gmail address; a shared calendar's ID is in Google Calendar → Settings → the calendar → Integrate calendar. Saved on this device only, never in the code.</p>
     </div>
@@ -297,7 +323,7 @@
 </div>
 
 <script>
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const TZ = "Europe/London";
 
 /* ───────── Small helpers ───────── */
@@ -546,16 +572,93 @@ function calUrl(){
   calIds.forEach((id, i) => { p.append('src', id); p.append('color', CAL_COLOURS[i % CAL_COLOURS.length]); });
   return 'https://calendar.google.com/calendar/embed?' + p.toString();
 }
+/* Feed from Ben's Apps Script (preferred) */
+const CAL_FEED_KEY = "home_calendar_feed_v1";
+const CAL_CACHE_KEY = "home_calendar_cache_v1";
+let calFeed = lsRaw(CAL_FEED_KEY) || "";
+let calCache = lsGet(CAL_CACHE_KEY, null);   // {events, fetched}
+let calError = null, calLoading = false;
+
+function fetchCalendar(){
+  if(!calFeed || calLoading) return;
+  calLoading = true; renderCalendar();
+  const url = calFeed + (calFeed.includes('?') ? '&' : '?') + 'days=14&_=' + Date.now();
+  fetch(url, {redirect:'follow'})
+    .then(r => { if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(d => {
+      if(d.error) throw new Error(d.error);
+      calCache = {events: d.events || [], fetched: Date.now()};
+      lsSet(CAL_CACHE_KEY, calCache); calError = null;
+    })
+    .catch(err => { console.warn('calendar', err); calError = String(err.message || err); })
+    .finally(() => { calLoading = false; renderCalendar(); });
+}
+const hm = d => d.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', timeZone:TZ});
+function dayLabel(iso, todayISO){
+  const n = daysBetween(todayISO, iso);
+  if(n === 0) return 'Today';
+  if(n === 1) return 'Tomorrow';
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'short'});
+}
+function eventsByDay(events){
+  const todayISO = isoLocal(new Date());
+  const days = {};
+  const add = (iso, ev) => { if(daysBetween(todayISO, iso) < 0) return; (days[iso] = days[iso] || []).push(ev); };
+  events.forEach(ev => {
+    if(ev.allDay){
+      // allDay start/end are YYYY-MM-DD, end exclusive. Multi-day events show once,
+      // on their first day (or today if already under way), with an "until" note.
+      const last = new Date((ev.end || ev.start) + 'T00:00:00'); last.setDate(last.getDate() - 1);
+      const lastISO = isoLocal(last);
+      if(lastISO < todayISO) return;
+      add(ev.start < todayISO ? todayISO : ev.start, {...ev, until: lastISO > ev.start ? lastISO : null});
+    } else {
+      add(isoLocal(new Date(ev.start)), ev);
+    }
+  });
+  Object.values(days).forEach(list => list.sort((a,b) => (b.allDay - a.allDay) || (a.start < b.start ? -1 : 1)));
+  return Object.keys(days).sort().map(iso => ({iso, label: dayLabel(iso, todayISO), today: iso === todayISO, events: days[iso]}));
+}
+function renderFeed(){
+  const foot = `<div class="cal-foot"><span>${calLoading ? 'Updating…' : calCache ? 'Updated ' + hm(new Date(calCache.fetched)) : ''}</span>
+    <span><button class="linkish" type="button" id="calRefresh">Refresh</button> · <a class="linkish" href="https://calendar.google.com/" target="_blank" rel="noopener">Open ↗</a></span></div>`;
+  const err = calError ? `<div class="notice">Couldn't reach your calendar feed (${esc(calError)}). Check the link in ⚙️ Settings, and that the script is deployed with access "Anyone".</div>` : '';
+  if(!calCache){
+    $('calBody').innerHTML = err + `<p class="empty-note">${calLoading ? 'Loading your calendar…' : 'No events loaded yet.'}</p>` + foot;
+  } else {
+    const now = Date.now();
+    const groups = eventsByDay(calCache.events);
+    $('calBody').innerHTML = err + (groups.length ? groups.map(g => `
+      <div class="ev-day ${g.today ? 'today' : ''}">${esc(g.label)}</div>
+      ${g.events.map(ev => {
+        const past = !ev.allDay && new Date(ev.end).getTime() < now;
+        const tm = ev.allDay ? (ev.until ? 'Until ' + new Date(ev.until + 'T00:00:00').toLocaleDateString('en-GB', {weekday:'short', day:'numeric'}) : 'All day') : `${hm(new Date(ev.start))}–${hm(new Date(ev.end))}`;
+        return `<div class="ev ${past ? 'past' : ''}"><span class="bar" style="background:${esc(ev.color || 'var(--blue)')}"></span>
+          <span class="tm">${tm}</span>
+          <div class="ti">${esc(ev.title || '(No title)')}${ev.location ? `<small>${esc(ev.location)}</small>` : ''}</div></div>`;
+      }).join('')}`).join('') : `<p class="empty-note">Nothing in the next two weeks.</p>`) + foot;
+  }
+  $('calRefresh').onclick = fetchCalendar;
+  // Tile: next upcoming timed event today, else first thing tomorrow
+  const upcoming = (calCache ? calCache.events : []).filter(ev => !ev.allDay && new Date(ev.end).getTime() > now_()).sort((a,b) => a.start < b.start ? -1 : 1)[0];
+  if(upcoming){
+    const d = new Date(upcoming.start), sameDay = isoLocal(d) === isoLocal(new Date());
+    $('tileCal').textContent = `${sameDay ? '' : d.toLocaleDateString('en-GB', {weekday:'short'}) + ' '}${hm(d)} ${upcoming.title || ''}`;
+  } else { $('tileCal').textContent = 'Google Calendar'; }
+}
+const now_ = () => Date.now();
+
 function renderCalendar(){
+  if(calFeed){ $('calSeg').style.display = 'none'; renderFeed(); return; }
   document.querySelectorAll('#calSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === calMode));
   $('calSeg').style.display = calIds.length ? '' : 'none';
   if(!calIds.length){
-    $('calBody').innerHTML = `<div class="cal-setup"><p>Add your Google Calendar to see what's coming up.<br>It's your Gmail address for your main calendar.</p><button class="btn" type="button" id="calSetupBtn">Add calendar</button></div>`;
+    $('calBody').innerHTML = `<div class="cal-setup"><p>Connect your Google Calendar to see what's coming up.</p><button class="btn" type="button" id="calSetupBtn">Set up calendar</button></div>`;
     $('calSetupBtn').onclick = openSettings;
     return;
   }
   $('calBody').innerHTML = `<iframe class="cal-frame" src="${esc(calUrl())}" loading="lazy" title="Google Calendar"></iframe>
-    <div class="cal-foot"><span>Blank? Sign into Google in this browser.</span><a class="linkish" href="https://calendar.google.com/" target="_blank" rel="noopener">Open Google Calendar ↗</a></div>`;
+    <div class="cal-foot"><span>Blank? Add a calendar feed link in ⚙️ Settings.</span><a class="linkish" href="https://calendar.google.com/" target="_blank" rel="noopener">Open Google Calendar ↗</a></div>`;
 }
 $('calSeg').addEventListener('click', ev => {
   const b = ev.target.closest('button'); if(!b) return;
@@ -564,23 +667,31 @@ $('calSeg').addEventListener('click', ev => {
 });
 
 /* ───────── Settings ───────── */
-function openSettings(){ $('calIds').value = calIds.join('\n'); $('settings').classList.add('open'); }
+function openSettings(){ $('calIds').value = calIds.join('\n'); $('calFeed').value = calFeed; $('settings').classList.add('open'); }
 function closeSettings(){ $('settings').classList.remove('open'); }
 $('settingsBtn').onclick = openSettings;
 $('settingsCancel').onclick = closeSettings;
 $('settings').addEventListener('click', ev => { if(ev.target === $('settings')) closeSettings(); });
 $('settingsSave').onclick = () => {
   calIds = $('calIds').value.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-  lsSet(CAL_KEY, calIds); closeSettings(); renderCalendar();
+  lsSet(CAL_KEY, calIds);
+  const feed = $('calFeed').value.trim();
+  if(feed !== calFeed){ calFeed = feed; calCache = null; calError = null; try{ feed ? localStorage.setItem(CAL_FEED_KEY, feed) : localStorage.removeItem(CAL_FEED_KEY); localStorage.removeItem(CAL_CACHE_KEY); }catch(e){} }
+  closeSettings(); renderCalendar(); fetchCalendar();
 };
 
 /* ───────── Boot ───────── */
 $('versionBadge').textContent = `v${APP_VERSION}`;
 function renderAll(){ renderHeader(); renderMeals(); renderChores(); renderTodos(); }
-renderAll(); renderCalendar();
+renderAll(); renderCalendar(); fetchCalendar();
+setInterval(fetchCalendar, 15 * 60000);
 if(!db) markTodoBlocked();
 // Refresh glances when coming back to the tab (e.g. after editing Meal Rota) and at midnight
-document.addEventListener('visibilitychange', () => { if(!document.hidden) renderAll(); });
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden) return;
+  renderAll();
+  if(calFeed && (!calCache || Date.now() - calCache.fetched > 5 * 60000)) fetchCalendar(); else renderCalendar();
+});
 setInterval(renderHeader, 60000);
 let lastDay = isoLocal(new Date());
 setInterval(() => { const d = isoLocal(new Date()); if(d !== lastDay){ lastDay = d; renderAll(); } }, 60000);

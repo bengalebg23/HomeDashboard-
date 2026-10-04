@@ -1,6 +1,6 @@
 // Service worker for Home dashboard
 // Bump CACHE_VERSION on every release to force clients to fetch fresh code.
-const CACHE_VERSION = 'v1.0.0';
+const CACHE_VERSION = 'v1.1.0';
 const CACHE_NAME = `home-${CACHE_VERSION}`;
 const PRECACHE_URLS = ['./', './index.html', './manifest.webmanifest'];
 

@@ -39,12 +39,15 @@
     repo, so no email address is published. Private calendars only show in a
     browser signed into that Google account.
   - Money Flow: launcher tile only (it's localStorage-only and personal).
+  - Tally (v1.2): launcher tile only. Its data is end-to-end encrypted behind
+    a PIN, so the dashboard deliberately shows no glance of it.
 
   RULES (same as the other apps)
   - CDN URLs pinned to exact versions.
   - Every release bumps APP_VERSION here AND CACHE_VERSION in sw.js.
 
   CHANGELOG
+  v1.2.0 — Tally launcher tile (5 tiles per row).
   v1.1.0 — calendar now reads events from Ben's Apps Script feed and shows
            a native 14-day agenda (embed was blank on phones). Calendar tile
            shows the next event. Embed kept as a fallback.
@@ -56,7 +59,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#F7F8FA">
-<title>Home v1.1.0</title>
+<title>Home v1.2.0</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%232F6FE4'/><path d='M14 31 32 16l18 15v17a2 2 0 0 1-2 2H38V38H26v12H16a2 2 0 0 1-2-2z' fill='white'/></svg>">
 <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%232F6FE4'/><path d='M44 94 96 50l52 44v50a6 6 0 0 1-6 6h-30v-36H80v36H50a6 6 0 0 1-6-6z' fill='white'/></svg>">
@@ -72,7 +75,7 @@
     --blue:#2F6FE4; --blue-dim:#1f4fb0; --blue-soft:#E6EEFC;
     --rose:#F0703C; --rose-soft:#FDEBE2; --amber:#C98A12; --amber-soft:#FBF1DC;
     --green:#2FA84F; --green-soft:#E3F4E8;
-    --t-meal:#E0A23A; --t-chores:#8E4B8A; --t-money:#2FA84F; --t-cal:#2F6FE4;
+    --t-meal:#E0A23A; --t-chores:#8E4B8A; --t-money:#2FA84F; --t-cal:#2F6FE4; --t-tally:#4a3aa7;
     --shadow:0 1px 2px rgba(38,49,63,.06), 0 2px 10px rgba(38,49,63,.05);
   }
   :root[data-theme="dark"]{
@@ -104,7 +107,7 @@
   .icon-btn svg{width:19px; height:19px;}
 
   /* App tiles */
-  .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px;}
+  .tiles{display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:16px;}
   .tile{display:flex; flex-direction:column; gap:10px; padding:14px 12px 12px; border-radius:16px; background:var(--surface);
     border:1px solid var(--line); text-decoration:none; box-shadow:var(--shadow); min-width:0; transition:transform .1s;}
   .tile:active{transform:scale(.97);}
@@ -113,9 +116,9 @@
   .tile .nm{font-weight:600; font-size:14px; line-height:1.15;}
   .tile .st{font-size:11.5px; color:var(--muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   @media (max-width:520px){
-    .tiles{gap:8px;}
-    .tile{padding:12px 6px 10px; align-items:center; text-align:center; gap:7px;}
-    .tile .nm{font-size:12.5px;}
+    .tiles{gap:6px;}
+    .tile{padding:12px 4px 10px; align-items:center; text-align:center; gap:7px;}
+    .tile .nm{font-size:12px;}
     .tile .st{display:none;}
   }
 
@@ -245,6 +248,10 @@
       <span class="ic" style="background:var(--t-money)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h5c4 0 4 6 8 6h5"/><path d="M3 18h5c4 0 4-6 8-6"/><path d="M18 9l3 3-3 3"/></svg></span>
       <span><div class="nm">Money Flow</div><div class="st">Yearly Sankey</div></span>
     </a>
+    <a class="tile" href="../Tally/">
+      <span class="ic" style="background:var(--t-tally)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 5v14M10 5v14M14 5v14M18 5v14M4 16l16-7"/></svg></span>
+      <span><div class="nm">Tally</div><div class="st">Private · PIN</div></span>
+    </a>
     <a class="tile" href="https://calendar.google.com/" target="_blank" rel="noopener">
       <span class="ic" style="background:var(--t-cal)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span>
       <span><div class="nm">Calendar</div><div class="st" id="tileCal">Google Calendar</div></span>
@@ -323,7 +330,7 @@
 </div>
 
 <script>
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const TZ = "Europe/London";
 
 /* ───────── Small helpers ───────── */

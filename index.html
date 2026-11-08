@@ -41,12 +41,23 @@
   - Money Flow: launcher tile only (it's localStorage-only and personal).
   - Tally (v1.2): launcher tile only. Its data is end-to-end encrypted behind
     a PIN, so the dashboard deliberately shows no glance of it.
+  - Christmas presents (v1.3): stored in the House Ledger Firebase project at
+    /christmas/<year> = {seeded, people:{id:{name,budget,order}},
+    items:{id:{person,text,link,price,confirmed,created}}}, cached in
+    localStorage home_xmas_<year>_v1. Default people Reuben, Vivien, Adults are
+    seeded once (the 'seeded' flag stops deleted defaults coming back). Budget
+    left = budget − sum of confirmed prices. Writes made while sync is blocked
+    are queued in home_xmas_<year>_pending_v1 and pushed on first sync.
+    NEEDS a Firebase rule:  "christmas": { ".read": true, ".write": true }
 
   RULES (same as the other apps)
   - CDN URLs pinned to exact versions.
   - Every release bumps APP_VERSION here AND CACHE_VERSION in sw.js.
 
   CHANGELOG
+  v1.3.0 — Christmas presents card: a section per person (Reuben, Vivien,
+           Adults + add your own), ideas with links, price and a confirmed
+           tick, optional budget per person that counts down as you confirm.
   v1.2.0 — Tally launcher tile (5 tiles per row).
   v1.1.0 — calendar now reads events from Ben's Apps Script feed and shows
            a native 14-day agenda (embed was blank on phones). Calendar tile
@@ -59,7 +70,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#F7F8FA">
-<title>Home v1.2.0</title>
+<title>Home v1.3.0</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%232F6FE4'/><path d='M14 31 32 16l18 15v17a2 2 0 0 1-2 2H38V38H26v12H16a2 2 0 0 1-2-2z' fill='white'/></svg>">
 <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%232F6FE4'/><path d='M44 94 96 50l52 44v50a6 6 0 0 1-6 6h-30v-36H80v36H50a6 6 0 0 1-6-6z' fill='white'/></svg>">
@@ -200,6 +211,45 @@
   .ev.past{opacity:.5;}
   .cal-foot{display:flex; justify-content:space-between; gap:10px; margin-top:10px; font-size:12px; color:var(--muted); align-items:center;}
 
+  /* Christmas presents */
+  .xm-sum{display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12.5px; color:var(--paper-dim); margin:-4px 0 10px;}
+  .xm-sum b{font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--paper);}
+  .xp{border-top:1px dashed var(--line);}
+  .xp:first-child{border-top:0;}
+  .xp-h{display:flex; align-items:center; gap:10px; width:100%; padding:11px 0 9px; border:0; background:none; cursor:pointer; text-align:left;}
+  .xp-h .chev{width:16px; height:16px; color:var(--muted); flex:none; transition:transform .15s;}
+  .xp.open .xp-h .chev{transform:rotate(90deg);}
+  .xp-h .who{flex:1; min-width:0;}
+  .xp-h .who .nm{font-family:'Patrick Hand',cursive; font-size:21px; line-height:1.1;}
+  .xp-h .who small{display:block; font-size:11.5px; color:var(--muted); margin-top:1px;}
+  .xp-h .left{text-align:right; flex:none;}
+  .xp-h .left .n{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:17px; font-variant-numeric:tabular-nums;}
+  .xp-h .left small{display:block; font-size:11px; color:var(--muted);}
+  .xp-bar{height:5px; border-radius:3px; background:var(--surface-2); overflow:hidden; margin:0 0 10px 26px;}
+  .xp-bar span{display:block; height:100%; border-radius:3px;}
+  .xp-body{padding:0 0 10px 26px;}
+  .gift{display:flex; align-items:flex-start; gap:10px; padding:8px 0; border-top:1px dashed var(--line);}
+  .gift:first-child{border-top:0;}
+  .chk{width:26px; height:26px; border-radius:8px; border:2px solid var(--line); background:transparent; flex:none; cursor:pointer;
+    display:grid; place-items:center; padding:0; color:#fff; margin-top:1px;}
+  .chk svg{width:15px; height:15px; opacity:0;}
+  .gift.conf .chk{background:var(--green); border-color:var(--green);}
+  .gift.conf .chk svg{opacity:1;}
+  .gift .gm{flex:1; min-width:0; cursor:pointer;}
+  .gift .gt{font-size:15px; line-height:1.35; word-wrap:break-word;}
+  .gift.conf .gt{font-weight:600;}
+  .gift .links{display:flex; flex-wrap:wrap; gap:5px; margin-top:4px;}
+  .gift .links a{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--blue); background:var(--blue-soft); padding:3px 7px; border-radius:7px; text-decoration:none; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .gift .pr{font-family:'IBM Plex Mono',monospace; font-size:13.5px; font-weight:600; white-space:nowrap; padding-top:3px; font-variant-numeric:tabular-nums;}
+  .gift:not(.conf) .pr{color:var(--muted); font-weight:500;}
+  .xp-foot{display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:6px; font-size:12px; color:var(--muted);}
+  .add-btn{height:34px; padding:0 12px; border-radius:10px; border:1px dashed var(--line); background:none; color:var(--blue); font-weight:600; font-size:13px; cursor:pointer;}
+  .field input[type=text], .field input[type=url], .field input[inputmode]{width:100%; height:44px; border-radius:12px; border:1px solid var(--line); background:var(--surface-2); padding:0 12px; font-size:16px; color:var(--paper); outline:none;}
+  .field input:focus, .field textarea:focus{border-color:var(--blue); background:var(--surface);}
+  .field .check{display:flex; align-items:center; gap:10px; font-weight:600; font-size:15px; cursor:pointer;}
+  .field .check input{width:22px; height:22px; accent-color:var(--green);}
+  .btn.danger{background:var(--rose-soft); color:var(--rose); margin-right:auto;}
+
   /* Settings sheet */
   .scrim{position:fixed; inset:0; background:rgba(15,20,28,.45); display:none; align-items:flex-end; justify-content:center; z-index:50;}
   .scrim.open{display:flex;}
@@ -292,6 +342,16 @@
       </div>
     </section>
 
+    <section class="card span2" id="xmasCard">
+      <div class="card-h">
+        <div><p class="eyebrow"><span class="sync-dot" id="xmasDot"></span><span id="xmasEyebrow">Christmas</span></p><h2>Presents</h2></div>
+        <button class="open-link" type="button" id="xmasAddPerson" style="border:0;cursor:pointer">+ Person</button>
+      </div>
+      <div id="xmasNotice"></div>
+      <div id="xmasSum"></div>
+      <div id="xmasList"></div>
+    </section>
+
     <section class="card span2" id="calCard">
       <div class="card-h">
         <div><p class="eyebrow">Google</p><h2>Calendar</h2></div>
@@ -329,8 +389,20 @@
   </div>
 </div>
 
+<div class="scrim" id="xSheet">
+  <div class="sheet" role="dialog" aria-label="Edit">
+    <h3 id="xSheetTitle"></h3>
+    <div id="xSheetBody"></div>
+    <div class="sheet-btns">
+      <button class="btn danger" type="button" id="xSheetDel">Delete</button>
+      <button class="btn ghost" type="button" id="xSheetCancel">Cancel</button>
+      <button class="btn" type="button" id="xSheetSave">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 const TZ = "Europe/London";
 
 /* ───────── Small helpers ───────── */
@@ -568,6 +640,249 @@ if(db){
   }, err => { console.warn('todos', err); markTodoBlocked(); });
 }
 
+/* ───────── Christmas presents (Firebase /christmas/<year>, cached locally) ───────── */
+// Shape: { seeded:true, people:{id:{name, budget|null, order}}, items:{id:{person, text, link, price|null, confirmed, created}} }
+const XMAS_YEAR = new Date().getFullYear();
+const XMAS_KEY = `home_xmas_${XMAS_YEAR}_v1`;
+const XMAS_PENDING_KEY = `home_xmas_${XMAS_YEAR}_pending_v1`;   // paths written while sync was blocked
+const XMAS_OPEN_KEY = "home_xmas_open_v1";                       // which people are expanded on this device
+const XMAS_DEFAULTS = {
+  reuben: {name:'Reuben', budget:null, order:1},
+  vivien: {name:'Vivien', budget:null, order:2},
+  adults: {name:'Adults', budget:null, order:3},
+};
+let xmas = lsGet(XMAS_KEY, null) || {};
+xmas.people = xmas.people || {}; xmas.items = xmas.items || {};
+let xmasPending = lsGet(XMAS_PENDING_KEY, []) || [];
+let xmasOpen = lsGet(XMAS_OPEN_KEY, ['reuben','vivien']) || [];
+let xmasSynced = false, xmasBlocked = false;
+const xmasRef = db ? db.ref(`christmas/${XMAS_YEAR}`) : null;
+
+const gbp = n => '£' + Number(n).toLocaleString('en-GB', {minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2});
+const parsePrice = s => { const v = parseFloat(String(s ?? '').replace(/[£,\s]/g, '')); return isFinite(v) && v >= 0 ? Math.round(v * 100) / 100 : null; };
+function linksOf(str){
+  return String(str || '').split(/\s+/).filter(Boolean).map(u => {
+    const href = /^https?:\/\//i.test(u) ? u : 'https://' + u;
+    try{ const url = new URL(href); return {href: url.href, host: url.hostname.replace(/^www\./, '')}; }catch(e){ return null; }
+  }).filter(Boolean);
+}
+function xmasNewId(kind){
+  return (xmasRef && !xmasBlocked) ? xmasRef.child(kind).push().key : kind[0] + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+function xmasPend(paths){
+  paths.forEach(p => { if(!xmasPending.includes(p)) xmasPending.push(p); });
+  lsSet(XMAS_PENDING_KEY, xmasPending);
+}
+function markXmasBlocked(){
+  xmasBlocked = true;
+  $('xmasDot').classList.remove('on');
+  $('xmasNotice').innerHTML = `<div class="notice">Saved on this device only. To share with Emily's phone, add <code>"christmas": { ".read": true, ".write": true }</code> to the House Ledger Firebase rules.</div>`;
+}
+// changes: {"people/<id>": value|null, "items/<id>": value|null}
+function xmasUpdate(changes){
+  Object.entries(changes).forEach(([path, v]) => {
+    const [kind, id] = path.split('/');
+    if(v == null) delete xmas[kind][id]; else xmas[kind][id] = v;
+  });
+  lsSet(XMAS_KEY, xmas); renderXmas();
+  if(xmasRef && !xmasBlocked){
+    xmasRef.update(changes).catch(err => { console.warn('xmas write', err); xmasPend(Object.keys(changes)); markXmasBlocked(); });
+  } else {
+    xmasPend(Object.keys(changes));
+  }
+}
+function xmasSeedLocal(){
+  if(xmas.seeded || Object.keys(xmas.people).length) return;
+  xmas.seeded = true;
+  Object.entries(XMAS_DEFAULTS).forEach(([id, p]) => { xmas.people[id] = {...p}; });
+  xmasPend(Object.keys(XMAS_DEFAULTS).map(id => 'people/' + id));
+  lsSet(XMAS_KEY, xmas);
+}
+
+function renderXmas(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const toGo = Math.round((new Date(XMAS_YEAR, 11, 25) - today) / 86400000);
+  $('xmasEyebrow').textContent = `Christmas ${XMAS_YEAR}` + (toGo > 1 ? ` · ${toGo} days to go` : toGo === 1 ? ' · tomorrow!' : toGo === 0 ? ' · today!' : '');
+
+  const people = Object.entries(xmas.people).map(([id, p]) => ({id, ...p}))
+    .sort((a,b) => (a.order || 0) - (b.order || 0) || String(a.name).localeCompare(String(b.name)));
+  const items = Object.entries(xmas.items).map(([id, it]) => ({id, ...it}));
+  let totSpent = 0, totBudget = 0, anyBudget = false;
+  const tick = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
+
+  $('xmasList').innerHTML = people.length ? people.map(p => {
+    const mine = items.filter(it => it.person === p.id)
+      .sort((a,b) => (b.confirmed ? 1 : 0) - (a.confirmed ? 1 : 0) || (a.created || 0) - (b.created || 0));
+    const spent = mine.filter(it => it.confirmed).reduce((s, it) => s + (it.price || 0), 0);
+    const ideas = mine.filter(it => !it.confirmed).reduce((s, it) => s + (it.price || 0), 0);
+    const nConf = mine.filter(it => it.confirmed).length;
+    const hasBudget = typeof p.budget === 'number';
+    totSpent += spent;
+    if(hasBudget){ totBudget += p.budget; anyBudget = true; }
+    const left = hasBudget ? Math.round((p.budget - spent) * 100) / 100 : null;
+    const colour = !hasBudget ? 'var(--paper)' : left < 0 ? 'var(--rose)' : left <= p.budget * 0.15 ? 'var(--amber)' : 'var(--green)';
+    const pct = hasBudget && p.budget > 0 ? Math.min(100, spent / p.budget * 100) : (hasBudget && spent > 0 ? 100 : 0);
+    const isOpen = xmasOpen.includes(p.id);
+    const right = hasBudget
+      ? `<div class="n" style="color:${colour}">${left < 0 ? gbp(-left) + ' over' : gbp(left) + ' left'}</div><small>of ${gbp(p.budget)}</small>`
+      : `<div class="n">${gbp(spent)}</div><small>no budget set</small>`;
+    const rows = mine.map(it => {
+      const links = linksOf(it.link);
+      return `<div class="gift ${it.confirmed ? 'conf' : ''}" data-id="${esc(it.id)}">
+        <button class="chk" type="button" data-act="conf" aria-label="${it.confirmed ? 'Unconfirm' : 'Confirm'}">${tick}</button>
+        <div class="gm" data-act="edit">
+          <div class="gt">${esc(it.text || '(no description)')}</div>
+          ${links.length ? `<div class="links">${links.map(l => `<a href="${esc(l.href)}" target="_blank" rel="noopener">${esc(l.host)} ↗</a>`).join('')}</div>` : ''}
+        </div>
+        <span class="pr">${it.price != null ? gbp(it.price) : '—'}</span>
+      </div>`;
+    }).join('');
+    return `<div class="xp ${isOpen ? 'open' : ''}" data-person="${esc(p.id)}">
+      <button class="xp-h" type="button" data-act="toggle">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <div class="who"><div class="nm">${esc(p.name)}</div><small>${mine.length ? `${nConf} of ${mine.length} confirmed` : 'No ideas yet'}</small></div>
+        <div class="left">${right}</div>
+      </button>
+      ${hasBudget ? `<div class="xp-bar"><span style="width:${pct}%;background:${colour}"></span></div>` : ''}
+      ${isOpen ? `<div class="xp-body">
+        ${rows || '<p class="empty-note" style="text-align:left;padding:2px 0 6px">No ideas yet.</p>'}
+        <div class="xp-foot">
+          <button class="add-btn" type="button" data-act="add">+ Add idea</button>
+          <span>${ideas ? `Unconfirmed ideas ${gbp(ideas)} · ` : ''}<button class="linkish" type="button" data-act="person">Edit ${esc(p.name)}</button></span>
+        </div>
+      </div>` : ''}
+    </div>`;
+  }).join('') : `<p class="empty-note">No one on the list yet. Tap + Person.</p>`;
+
+  $('xmasSum').innerHTML = totSpent || anyBudget
+    ? `<div class="xm-sum"><span>Confirmed <b>${gbp(totSpent)}</b></span>${anyBudget ? `<span>Budgets <b>${gbp(totBudget)}</b></span>` : ''}</div>` : '';
+}
+
+/* Edit sheet (shared by ideas and people) */
+let xSheetMode = null;   // {kind:'item'|'person', id, person?}
+function openXSheet(mode){
+  xSheetMode = mode;
+  if(mode.kind === 'item'){
+    const it = mode.id ? xmas.items[mode.id] || {} : {};
+    const who = (xmas.people[mode.person || it.person] || {}).name || '';
+    $('xSheetTitle').textContent = mode.id ? `Idea for ${who}` : `New idea for ${who}`;
+    $('xSheetBody').innerHTML = `
+      <div class="field"><label for="xIdea">Idea</label><input type="text" id="xIdea" maxlength="200" value="${esc(it.text || '')}" placeholder="e.g. Lego Technic digger"></div>
+      <div class="field"><label for="xLink">Links</label><textarea id="xLink" style="min-height:64px" placeholder="Paste a link (one per line)">${esc(it.link || '')}</textarea></div>
+      <div class="field"><label for="xPrice">Price (£)</label><input type="text" inputmode="decimal" id="xPrice" value="${it.price != null ? esc(it.price) : ''}" placeholder="0.00"></div>
+      <div class="field"><label class="check"><input type="checkbox" id="xConf" ${it.confirmed ? 'checked' : ''}> Confirmed (bought)</label></div>`;
+  } else {
+    const p = mode.id ? xmas.people[mode.id] || {} : {};
+    $('xSheetTitle').textContent = mode.id ? `Edit ${p.name || 'person'}` : 'Add a person';
+    $('xSheetBody').innerHTML = `
+      <div class="field"><label for="xName">Name</label><input type="text" id="xName" maxlength="60" value="${esc(p.name || '')}" placeholder="e.g. Mum, Aunty Jo"></div>
+      <div class="field"><label for="xBudget">Budget (£)</label><input type="text" inputmode="decimal" id="xBudget" value="${typeof p.budget === 'number' ? esc(p.budget) : ''}" placeholder="Leave blank for no budget">
+        <p class="hint">Counts down as you tick ideas as confirmed.</p></div>`;
+  }
+  $('xSheetDel').style.display = mode.id ? '' : 'none';
+  $('xSheet').classList.add('open');
+  if(!mode.id) setTimeout(() => { const f = $('xSheetBody').querySelector('input'); if(f) f.focus(); }, 50);
+}
+function closeXSheet(){ $('xSheet').classList.remove('open'); xSheetMode = null; }
+$('xSheetCancel').onclick = closeXSheet;
+$('xSheet').addEventListener('click', ev => { if(ev.target === $('xSheet')) closeXSheet(); });
+$('xSheetSave').onclick = () => {
+  const m = xSheetMode; if(!m) return;
+  if(m.kind === 'item'){
+    const text = $('xIdea').value.trim();
+    const link = $('xLink').value.trim();
+    const priceRaw = $('xPrice').value.trim();
+    const price = parsePrice(priceRaw);
+    if(!text && !link){ $('xIdea').focus(); return; }
+    if(priceRaw && price == null){ alert("That price doesn't look like a number."); $('xPrice').focus(); return; }
+    const prev = m.id ? xmas.items[m.id] || {} : {};
+    const id = m.id || xmasNewId('items');
+    closeXSheet();
+    xmasUpdate({['items/' + id]: {person: prev.person || m.person, text, link, price, confirmed: $('xConf') ? $('xConf').checked : false, created: prev.created || Date.now()}});
+  } else {
+    const name = $('xName').value.trim();
+    const budgetRaw = $('xBudget').value.trim();
+    const budget = parsePrice(budgetRaw);
+    if(!name){ $('xName').focus(); return; }
+    if(budgetRaw && budget == null){ alert("That budget doesn't look like a number."); $('xBudget').focus(); return; }
+    const prev = m.id ? xmas.people[m.id] || {} : {};
+    const id = m.id || xmasNewId('people');
+    if(!m.id && !xmasOpen.includes(id)){ xmasOpen.push(id); lsSet(XMAS_OPEN_KEY, xmasOpen); }
+    closeXSheet();
+    xmasUpdate({['people/' + id]: {name, budget, order: prev.order != null ? prev.order : Date.now()}});
+  }
+};
+$('xSheetDel').onclick = () => {
+  const m = xSheetMode; if(!m || !m.id) return;
+  if(m.kind === 'item'){
+    const it = xmas.items[m.id] || {};
+    if(!confirm(`Delete "${it.text || 'this idea'}"?`)) return;
+    closeXSheet();
+    xmasUpdate({['items/' + m.id]: null});
+  } else {
+    const p = xmas.people[m.id] || {};
+    const theirs = Object.keys(xmas.items).filter(iid => xmas.items[iid].person === m.id);
+    if(!confirm(`Remove ${p.name || 'this person'}${theirs.length ? ` and their ${theirs.length} idea${theirs.length === 1 ? '' : 's'}` : ''}?`)) return;
+    const changes = {['people/' + m.id]: null};
+    theirs.forEach(iid => { changes['items/' + iid] = null; });
+    closeXSheet();
+    xmasUpdate(changes);
+  }
+};
+$('xmasAddPerson').onclick = () => openXSheet({kind:'person', id:null});
+$('xmasList').addEventListener('click', ev => {
+  if(ev.target.closest('a')) return;                       // link chips open normally
+  const act = ev.target.closest('[data-act]'); if(!act) return;
+  const pid = act.closest('.xp') && act.closest('.xp').dataset.person;
+  const gift = act.closest('.gift');
+  const iid = gift && gift.dataset.id;
+  switch(act.dataset.act){
+    case 'toggle':
+      setTimeout(() => {
+        xmasOpen = xmasOpen.includes(pid) ? xmasOpen.filter(x => x !== pid) : [...xmasOpen, pid];
+        lsSet(XMAS_OPEN_KEY, xmasOpen); renderXmas();
+      }, 0);
+      break;
+    case 'conf': {
+      const it = xmas.items[iid]; if(!it) return;
+      setTimeout(() => xmasUpdate({['items/' + iid]: {...it, confirmed: !it.confirmed}}), 0);
+      break;
+    }
+    case 'edit': openXSheet({kind:'item', id:iid}); break;
+    case 'add': openXSheet({kind:'item', id:null, person:pid}); break;
+    case 'person': openXSheet({kind:'person', id:pid}); break;
+  }
+});
+if(xmasRef){
+  xmasRef.on('value', snap => {
+    const remote = snap.val() || {};
+    const next = {seeded: !!remote.seeded, people: remote.people || {}, items: remote.items || {}};
+    if(!xmasSynced){
+      xmasSynced = true;
+      const upd = {};
+      // Push up only what was written on this device while sync was blocked (never resurrect deletions)
+      xmasPending.forEach(path => {
+        const [kind, id] = path.split('/');
+        const v = (xmas[kind] || {})[id];
+        upd[path] = v == null ? null : v;
+        if(v == null) delete next[kind][id]; else next[kind][id] = v;
+      });
+      if(!next.seeded && !Object.keys(next.people).length){
+        Object.entries(XMAS_DEFAULTS).forEach(([id, p]) => { upd['people/' + id] = p; next.people[id] = {...p}; });
+      }
+      if(!next.seeded){ upd.seeded = true; next.seeded = true; }
+      if(Object.keys(upd).length){
+        xmasRef.update(upd).then(() => { xmasPending = []; lsSet(XMAS_PENDING_KEY, xmasPending); })
+          .catch(err => { console.warn('xmas sync', err); markXmasBlocked(); });
+      } else { xmasPending = []; lsSet(XMAS_PENDING_KEY, xmasPending); }
+    }
+    xmas = next; lsSet(XMAS_KEY, xmas); renderXmas();
+    $('xmasDot').classList.add('on'); $('xmasNotice').innerHTML = '';
+  }, err => { console.warn('christmas', err); markXmasBlocked(); xmasSeedLocal(); renderXmas(); });
+} else {
+  xmasSeedLocal();
+}
+
 /* ───────── Google Calendar embed ───────── */
 const CAL_KEY = "home_calendar_ids_v1";
 const CAL_MODE_KEY = "home_calendar_mode_v1";
@@ -689,10 +1004,10 @@ $('settingsSave').onclick = () => {
 
 /* ───────── Boot ───────── */
 $('versionBadge').textContent = `v${APP_VERSION}`;
-function renderAll(){ renderHeader(); renderMeals(); renderChores(); renderTodos(); }
+function renderAll(){ renderHeader(); renderMeals(); renderChores(); renderTodos(); renderXmas(); }
 renderAll(); renderCalendar(); fetchCalendar();
 setInterval(fetchCalendar, 15 * 60000);
-if(!db) markTodoBlocked();
+if(!db){ markTodoBlocked(); markXmasBlocked(); }
 // Refresh glances when coming back to the tab (e.g. after editing Meal Rota) and at midnight
 document.addEventListener('visibilitychange', () => {
   if(document.hidden) return;
